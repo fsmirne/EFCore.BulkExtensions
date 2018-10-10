@@ -7,16 +7,18 @@ Current version is using EF Core 2.1.<br>
 For EF Core 2.0 install 2.0.8 Nuget, and for EF Core 1.x use 1.1.0 (targeting NetStandard 1.4)<br>
 Under the hood uses [SqlBulkCopy](https://msdn.microsoft.com/en-us/library/system.data.sqlclient.sqlbulkcopy.aspx) for Insert, for Update/Delete combines BulkInsert with raw Sql [MERGE](https://docs.microsoft.com/en-us/sql/t-sql/statements/merge-transact-sql) (MsSQL 2008+).
 
-Available on [![NuGet](https://img.shields.io/badge/NuGet-2.1.7-blue.svg)](https://www.nuget.org/packages/EFCore.BulkExtensions/) latest version.<br>
+Available on [![NuGet](https://img.shields.io/badge/NuGet-2.1.8-blue.svg)](https://www.nuget.org/packages/EFCore.BulkExtensions/) latest version.<br>
 Package manager console command for installation: *Install-Package EFCore.BulkExtensions*
 
 Usage is simple and pretty straightforward.<br>
 Extensions are made on *DbContext* class and can be used like this (both regular and Async methods are supported):
 ```C#
-context.BulkInsert(entitiesList);                context.BulkInsertAsync(entitiesList);
-context.BulkUpdate(entitiesList);                context.BulkUpdateAsync(entitiesList);
-context.BulkDelete(entitiesList);                context.BulkDeleteAsync(entitiesList);
-context.BulkInsertOrUpdate(entitiesList);        context.BulkInsertOrUpdateAsync(entitiesList);
+context.BulkInsert(entitiesList);                 context.BulkInsertAsync(entitiesList);
+context.BulkUpdate(entitiesList);                 context.BulkUpdateAsync(entitiesList);
+context.BulkDelete(entitiesList);                 context.BulkDeleteAsync(entitiesList);
+context.BulkInsertOrUpdate(entitiesList);         context.BulkInsertOrUpdateAsync(entitiesList);         // Upsert
+context.BulkInsertOrUpdateOrDelete(entitiesList); context.BulkInsertOrUpdateOrDeleteAsync(entitiesList); // Sync
+context.BulkRead(entitiesList);                   context.BulkReadAsync(entitiesList);
 ```
 If Windows Authentication is used then in ConnectionString there should be *Trusted_Connection=True;* because Sql credentials are required to stay in connection.<br>
 
@@ -34,10 +36,13 @@ using (var transaction = context.Database.BeginTransaction())
 **BulkInsertOrUpdate** method can be used when there is need for both operations but in one connection to database.<br>
 It makes Update when PK(PrimaryKey) is matched, otherwise does Insert.<br>
 
+**BulkRead** does SELECT and JOIN based on one or more Unique columns that are specified in Config `UpdateByProperties`.<br>
+More info in the Example at the bottom.<br>
+
 ## BulkConfig arguments
 
 **BulkInsert** and **BulkInsertOrUpdate** methods can have optional argument **BulkConfig** with properties (bool, int, object, List<string>):<br>
-*{ PreserveInsertOrder, SetOutputIdentity, BatchSize, NotifyAfter, BulkCopyTimeout, EnableStreaming, UseTempDB, WithHoldlock, PropertiesToInclude, PropertiesToExclude, UpdateByProperties, SqlBulkCopyOptions }*<br>
+*{ PreserveInsertOrder, SetOutputIdentity, BatchSize, NotifyAfter, BulkCopyTimeout, EnableStreaming, UseTempDB, WithHoldlock, CalculateStats, StatsInfo, PropertiesToInclude, PropertiesToExclude, UpdateByProperties, SqlBulkCopyOptions }*<br>
 Default behaviour is { false, false, 2000,  null, null, false, false, true, null, null, null, Default } and if we want to change it, BulkConfig should be added explicitly with one or more bool properties set to true, and/or int props like **BatchSize** to different number.<br>
 When doing update we can chose to exclude one or more properties by adding their names into **PropertiesToExclude**, or if we need to update less then half column then **PropertiesToInclude** can be used. Setting both Lists are not allowed. Additionaly there is **UpdateByProperties** that allows specifying custom properties, besides PK, by which we want update to be done.<br>
 If **NotifyAfter** is not set it will have same value as _BatchSize_ while **BulkCopyTimeout** when not set has SqlBulkCopy default which is 30 seconds and if set to 0 it indicates no limit.<br>
@@ -87,7 +92,7 @@ using (var transaction = context.Database.BeginTransaction()) {
     transaction.Commit();
 }
 ```
-
+When **CalculateStats** is set to True the result is return in `BulkConfig.StatsInfo` (*StatsNumberInserted* and *StatsNumberUpdated*).
 
 **UseTempDB** when set then BulkOperation has to be [inside Transaction](https://github.com/borisdj/EFCore.BulkExtensions/issues/49)
 
@@ -141,10 +146,14 @@ foreach (var entity in entities) {
 }
 context.BulkUpdate(entities);
 ```
-REMARK When we need to Select from big List of some Unique Prop./Column Use `Join` instead of `Contains` for [Efficiency](https://stackoverflow.com/questions/16824510/select-multiple-records-based-on-list-of-ids-with-linq):<br>
+When we need to Select from big List of some Unique Prop./Column instead of `Join` or `Contains` use BulkRead for [Efficiency](https://stackoverflow.com/questions/16824510/select-multiple-records-based-on-list-of-ids-with-linq):<br>
 ```C#
-var entities = context.Items.Join(itemsNames, a => a.Name, p => p, (a, p) => a).AsNoTracking().ToList(); // use
-var entities = context.Items.Where(a => itemsNames.Contains(a.Name)).AsNoTracking().ToList(); // do NOT use
+// instead of
+var entities = context.Items.Join(itemsNames, a => a.Name, p => p, (a, p) => a).AsNoTracking().ToList(); // or
+var entities = context.Items.Where(a => itemsNames.Contains(a.Name)).AsNoTracking().ToList();
+// use
+var items = itemsNames.Select(a => new Item { Name = a });
+context.Items.BulkRead(items, new BulkConfig { UpdateByProperties = new List<string> { nameof(Item.Name) }) // items loaded with data
 ```
 
 

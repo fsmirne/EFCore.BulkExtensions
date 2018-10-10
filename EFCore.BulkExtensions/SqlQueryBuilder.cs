@@ -8,8 +8,11 @@ namespace EFCore.BulkExtensions
     {
         public static string CreateTableCopy(string existingTableName, string newTableName, TableInfo tableInfo, bool isOutputTable = false)
         {
+            // TODO: (optionaly) if CalculateStats = True but SetOutputIdentity = False then Columns could be ommited from Create and from MergeOutput
             List<string> columnsNames = (isOutputTable ? tableInfo.OutputPropertyColumnNamesDict : tableInfo.PropertyColumnNamesDict).Values.ToList();
-            var q = $"SELECT TOP 0 {GetCommaSeparatedColumns(columnsNames, "T")} " +
+            string isUpdateStatsColumn = (tableInfo.BulkConfig.CalculateStats && isOutputTable) ? ",[IsUpdate] = CAST(0 AS bit)" : "";
+
+            var q = $"SELECT TOP 0 {GetCommaSeparatedColumns(columnsNames, "T")} " + isUpdateStatsColumn +
                     $"INTO {newTableName} FROM {existingTableName} AS T " +
                     $"LEFT JOIN {existingTableName} AS Source ON 1 = 0;"; // removes Identity constrain
             return q;
@@ -20,6 +23,11 @@ namespace EFCore.BulkExtensions
             List<string> columnsNames = tableInfo.OutputPropertyColumnNamesDict.Values.ToList();
             string timeStampColumnNull = tableInfo.TimeStampColumn != null ? $", {tableInfo.TimeStampColumn} = NULL" : "";
             return $"SELECT {GetCommaSeparatedColumns(columnsNames)}{timeStampColumnNull} FROM {tableInfo.FullTempOutputTableName}";
+        }
+
+        public static string SelectCountIsUpdateFromOutputTable(TableInfo tableInfo)
+        {
+            return $"SELECT COUNT(*) FROM {tableInfo.FullTempOutputTableName} WHERE [IsUpdate] = 1";
         }
 
         public static string DropTable(string tableName)
@@ -56,6 +64,8 @@ namespace EFCore.BulkExtensions
             List<string> nonIdentityColumnsNames = columnsNames.Where(a => !primaryKeys.Contains(a)).ToList();
             List<string> insertColumnsNames = tableInfo.HasIdentity ? nonIdentityColumnsNames : columnsNames;
 
+            string isUpdateStatsValue = (tableInfo.BulkConfig.CalculateStats) ? ",(CASE $action WHEN 'UPDATE' THEN 1 Else 0 END)" : "";
+
             if (tableInfo.BulkConfig.PreserveInsertOrder)
                 sourceTable = $"(SELECT TOP {tableInfo.NumberOfEntities} * FROM {sourceTable} ORDER BY {GetCommaSeparatedColumns(primaryKeys)})";
 
@@ -71,12 +81,16 @@ namespace EFCore.BulkExtensions
             }
             if (operationType == OperationType.Insert || operationType == OperationType.InsertOrUpdate)
             {
-                q += $" WHEN NOT MATCHED THEN INSERT ({GetCommaSeparatedColumns(insertColumnsNames)})" +
+                q += $" WHEN NOT MATCHED BY TARGET THEN INSERT ({GetCommaSeparatedColumns(insertColumnsNames)})" +
                      $" VALUES ({GetCommaSeparatedColumns(insertColumnsNames, "S")})";
             }
-            if (operationType == OperationType.Update || (operationType == OperationType.InsertOrUpdate && nonIdentityColumnsNames.Count > 0))
+            if (operationType == OperationType.Update || ((operationType == OperationType.InsertOrUpdate || operationType == OperationType.InsertOrUpdateDelete) ))
             {
                 q += $" WHEN MATCHED THEN UPDATE SET {GetCommaSeparatedColumns(nonIdentityColumnsNames, "T", "S")}";
+            }
+            if (operationType == OperationType.InsertOrUpdateDelete)
+            {
+                q += $" WHEN NOT MATCHED BY SOURCE THEN DELETE";
             }
             if (operationType == OperationType.Delete)
             {
@@ -85,7 +99,7 @@ namespace EFCore.BulkExtensions
 
             if (tableInfo.BulkConfig.SetOutputIdentity)
             {
-                q += $" OUTPUT {GetCommaSeparatedColumns(outputColumnsNames, "INSERTED")}" +
+                q += $" OUTPUT {GetCommaSeparatedColumns(outputColumnsNames, "INSERTED")}" + isUpdateStatsValue +
                      $" INTO {tableInfo.FullTempOutputTableName}";
             }
             else if (tableInfo.BulkConfig.GenerateStats)
@@ -106,7 +120,10 @@ namespace EFCore.BulkExtensions
                 commaSeparatedColumns += equalsTable != null ? $" = {equalsTable}.[{columnName}]" : "";
                 commaSeparatedColumns += ", ";
             }
-            commaSeparatedColumns = commaSeparatedColumns.Remove(commaSeparatedColumns.Length - 2, 2); // removes last excess comma and space: ", "
+            if (commaSeparatedColumns != "")
+            {
+                commaSeparatedColumns = commaSeparatedColumns.Remove(commaSeparatedColumns.Length - 2, 2); // removes last excess comma and space: ", "
+            }
             return commaSeparatedColumns;
         }
 
@@ -126,7 +143,10 @@ namespace EFCore.BulkExtensions
                     string columnNullable = $"({column.Trim()} OR ({columnT} IS NULL AND {columnS} IS NULL))";
                     commaSeparatedColumnsNullable += columnNullable + ", ";
                 }
-                commaSeparatedColumnsNullable = commaSeparatedColumnsNullable.Remove(commaSeparatedColumnsNullable.Length - 2, 2);
+                if (commaSeparatedColumns != "")
+                {
+                    commaSeparatedColumnsNullable = commaSeparatedColumnsNullable.Remove(commaSeparatedColumnsNullable.Length - 2, 2);
+                }
                 commaSeparatedColumns = commaSeparatedColumnsNullable;
             }
 
