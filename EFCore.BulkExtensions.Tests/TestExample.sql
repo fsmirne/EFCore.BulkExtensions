@@ -44,3 +44,20 @@ ON T.[UserId] = S.[UserId] AND T.[RoleId] = S.[RoleId]
 WHEN NOT MATCHED BY TARGET THEN INSERT ([Description])
 VALUES (S.[Description])
 WHEN MATCHED THEN UPDATE SET T.[Description] = S.[Description];
+
+----------BATCH Examples----------
+
+-- BatchDelete
+SELECT [a].[ItemId], [a].[Description], [a].[Name], [a].[Price], [a].[Quantity], [a].[TimeUpdated]\r\nFROM [Item] AS [a]
+DELETE [a]																							  FROM [Item] AS [a]
+DELETE																								  FROM [Item]
+
+-- BatchDelete Where
+SELECT [a].[ItemId], [a].[Description], [a].[Name], [a].[Price], [a].[Quantity], [a].[TimeUpdated]    FROM [Item] AS [a]    WHERE [a].[ItemId] > 500
+DELETE [a]																							  FROM [Item] AS [a]	WHERE [a].[ItemId] > 500
+DELETE																								  FROM [Item]			WHERE [ItemId] > 500
+
+-- BatchUpdate Where
+SELECT [a].[ItemId], [a].[Description], [a].[Name], [a].[Price], [a].[Quantity], [a].[TimeUpdated]    FROM [Item] AS [a]    WHERE ([a].[ItemId] <= 500) AND ([a].[Price] >= 0.0)
+UPDATE [a] SET [Description] = N'Updated', [Price] = '1.5'											  FROM [Item] AS [a]	WHERE ([a].[ItemId] <= 500) AND ([a].[Price] >= 0.0)
+UPDATE [Item] SET [Description] = N'Updated', [Price] = '1.5'																WHERE ([ItemId] <= 500) AND ([Price] >= 0.0)
